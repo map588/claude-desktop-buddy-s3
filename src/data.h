@@ -128,7 +128,8 @@ struct _LineBuf {
   char buf[N];
   uint16_t len = 0;
   void feed(Stream& s, TamaState* out) {
-    while (s.available()) {
+    // > 0: HWCDC::available() returns -1 before Serial.begin().
+    while (s.available() > 0) {
       char c = s.read();
       if (c == '\n' || c == '\r') {
         if (len > 0) { buf[len]=0; if (buf[0]=='{') _applyJson(buf, out); len=0; }
@@ -154,9 +155,7 @@ inline void dataPoll(TamaState* out) {
     return;
   }
 
-#if !defined(ARDUINO_USB_MODE) || ARDUINO_USB_MODE == 0
   _usbLine.feed(Serial, out);
-#endif
   // BLE ring buffer is drained manually since it's not a Stream.
   while (bleAvailable()) {
     int c = bleRead();

@@ -11,8 +11,8 @@
 > - New `src/m5_compat.h` shim maps the old `M5.Axp.*`/`M5.Beep.*`/`M5.Imu.*` APIs onto the M5Unified equivalents
 > - StickS3 has no RTC chip. The charging clock uses the ESP32 system clock, which the desktop sets with each time sync. (With `M5.Rtc`, every read failed, and the landscape clock read past its day-name table and crashed the stick in a boot loop.)
 > - Power button handled via `M5.BtnPWR.wasClicked()` instead of `M5.Axp.GetBtnPress()`
-> - LED moved from G10 → **G19**
-> - `src/data.h` no longer reads from USB `Serial` — on ESP32-S3 with native USB CDC, `Serial.available()` can deadlock `dataPoll` when no host is actively draining. BLE is the only data channel on S3.
+> - StickS3 has no user LED. G19 is USB D-, so the firmware does not drive it. The `led` setting is stored only.
+> - USB `Serial` is a data channel again, the same as BLE. `setup()` sets `serial_baudrate`, so `M5.begin()` calls `Serial.begin()`. Without that call, `Serial.available()` returns -1 and the read loop does not stop.
 > - Host unit tests: `pio test -e native`
 >
 > **Flashing an S3 for the first time:**

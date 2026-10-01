@@ -24,7 +24,6 @@ static void startBt() {
 const int W = 135, H = 240;
 const int CX = W / 2;
 const int CY_BASE = 120;
-const int LED_PIN = BUDDY_DEFAULT_LED_PIN;   // red LED, active-low (S3: G19)
 
 // Colors used across multiple UI surfaces
 const uint16_t HOT   = 0xFA20;   // red-orange: warnings, impatience, deny
@@ -166,7 +165,7 @@ static void applySetting(uint8_t idx) {
       s.bt = !s.bt;
       break;
     case 3: s.wifi = !s.wifi; break;   // stored only — no WiFi stack linked
-    case 4: s.led = !s.led; break;
+    case 4: s.led = !s.led; break;     // stored only — StickS3 has no user LED
     case 5: s.hud = !s.hud; break;
     case 6: s.clockRot = (s.clockRot + 1) % 3; break;
     case 7: nextPet(); return;
@@ -928,13 +927,14 @@ void drawHUD() {
 
 void setup() {
   auto cfg = M5.config();
+  // With ARDUINO_USB_MODE=1 nothing else calls Serial.begin(). Until it
+  // runs, Serial.available() returns -1 and Serial drops all output.
+  cfg.serial_baudrate = 115200;
   M5.begin(cfg);
   M5.Display.setRotation(0);
   M5.Speaker.begin();
   M5.Speaker.setVolume(160);
   startBt();
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);   // off
   applyBrightness();
   lastInteractMs = millis();
   statsLoad();
@@ -992,13 +992,6 @@ void loop() {
   if (baseState == P_IDLE && (int32_t)(now - wakeTransitionUntil) < 0) baseState = P_SLEEP;
 
   if ((int32_t)(now - oneShotUntil) >= 0) activeState = baseState;
-
-  // LED: pulse on attention, otherwise off
-  if (activeState == P_ATTENTION && settings().led) {
-    digitalWrite(LED_PIN, (now / 400) % 2 ? LOW : HIGH);
-  } else {
-    digitalWrite(LED_PIN, HIGH);
-  }
 
   // shake → dizzy + force scenario advance
   if (now - lastShakeCheck > 50) {
