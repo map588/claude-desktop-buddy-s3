@@ -13,6 +13,7 @@
 > - Power button handled via `M5.BtnPWR.wasClicked()` instead of `M5.Axp.GetBtnPress()`
 > - StickS3 has no user LED. G19 is USB D-, so the firmware does not drive it. The `led` setting is stored only.
 > - USB `Serial` is a data channel again, the same as BLE. `setup()` sets `serial_baudrate`, so `M5.begin()` calls `Serial.begin()`. Without that call, `Serial.available()` returns -1 and the read loop does not stop.
+> - Power: the speaker codec and amplifier are on only around a beep, and the PM1 5V boost for Grove, Hat and IR is off.
 > - Host unit tests: `pio test -e native`
 >
 > **Flashing an S3 for the first time:**

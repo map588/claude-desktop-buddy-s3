@@ -108,8 +108,15 @@ static void wake() {
 }
 bool     responseSent = false;
 
+// The speaker path runs only around beeps: compat::beep() starts it, and
+// loop() stops it after SPEAKER_IDLE_MS without a beep.
+const uint32_t SPEAKER_IDLE_MS = 2000;
+static uint32_t lastBeepMs = 0;
+
 static void beep(uint16_t freq, uint16_t dur) {
-  if (settings().sound) compat::beep(freq, dur);
+  if (!settings().sound) return;
+  lastBeepMs = millis();
+  compat::beep(freq, dur);
 }
 
 static void sendCmd(const char* json) {
@@ -930,9 +937,11 @@ void setup() {
   // With ARDUINO_USB_MODE=1 nothing else calls Serial.begin(). Until it
   // runs, Serial.available() returns -1 and Serial drops all output.
   cfg.serial_baudrate = 115200;
+  // Nothing here uses Grove, Hat or IR, so keep off the PM1 5V boost that
+  // feeds them. M5Unified turns it on by default.
+  cfg.output_power = false;
   M5.begin(cfg);
   M5.Display.setRotation(0);
-  M5.Speaker.begin();
   M5.Speaker.setVolume(160);
   startBt();
   applyBrightness();
@@ -1245,6 +1254,8 @@ void loop() {
     compat::screenPower(false);
     screenOff = true;
   }
+
+  if (millis() - lastBeepMs > SPEAKER_IDLE_MS) compat::speakerOff();
 
   delay(screenOff ? 100 : 16);
 }
