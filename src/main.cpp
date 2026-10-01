@@ -20,6 +20,7 @@ static void startBt() {
 
 #include "character.h"
 #include "stats.h"
+#include "clock_face.h"
 const int W = 135, H = 240;
 const int CX = W / 2;
 const int CY_BASE = 120;
@@ -346,19 +347,19 @@ void drawMenu() {
 static uint8_t clockOrient   = 0;
 static int8_t  orientFrames  = 0;
 static uint8_t paintedOrient = 0;
-// RTC and IMU share an I2C bus. Reading the RTC at 60fps starves the IMU
-// reads in clockUpdateOrient — orientation detection gets noisy. Cache the
-// time once per second; mood logic and drawClock both read from here.
-static RTC_TimeTypeDef _clkTm;
-static RTC_DateTypeDef _clkDt;
-uint32_t               _clkLastRead = 0;   // zeroed by data.h on time-sync
-static bool            _onUsb       = false;
-static void clockRefreshRtc() {
+// M5StickS3 has no RTC chip, so the system clock keeps the time: data.h
+// sets it to local time on each bridge time sync. VBUS comes from the PMIC
+// on the I2C bus that the IMU also uses, so read it and the time once per
+// second; mood logic and drawClock both read from here.
+static struct tm _clk;
+uint32_t         _clkLastRead = 0;   // zeroed by data.h on time-sync
+static bool      _onUsb       = false;
+static void clockRefresh() {
   if (millis() - _clkLastRead < 1000) return;
   _clkLastRead = millis();
   _onUsb = compat::vbusVoltageV() > 4.0f;
-  M5.Rtc.getTime(&_clkTm);
-  M5.Rtc.getDate(&_clkDt);
+  time_t now = time(nullptr);
+  gmtime_r(&now, &_clk);
 }
 
 static void clockUpdateOrient() {
@@ -403,18 +404,10 @@ static void clockUpdateOrient() {
 // Clock face: shown when charging on USB with nothing else going on.
 // Portrait paints the upper ~110px to the sprite; pet renders below.
 // Landscape draws direct to LCD with rotation — sprite stays untouched.
-static const char* const MON[] = {
-  "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
-};
-static const char* const DOW[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-
-static uint8_t clockDow() { return _clkDt.weekDay % 7; }
 static void drawClock() {
   const Palette& p = characterPalette();
-  char hm[6]; snprintf(hm, sizeof(hm), "%02u:%02u", _clkTm.hours, _clkTm.minutes);
-  char ss[4]; snprintf(ss, sizeof(ss), ":%02u", _clkTm.seconds);
-  uint8_t mi = (_clkDt.month >= 1 && _clkDt.month <= 12) ? _clkDt.month - 1 : 0;
-  char dl[8]; snprintf(dl, sizeof(dl), "%s %02u", MON[mi], _clkDt.date);
+  ClockFaceText txt;
+  clockFaceText(_clk, txt);
 
   if (clockOrient == 0) {
     paintedOrient = 0;
@@ -422,9 +415,9 @@ static void drawClock() {
     // via peek mode. Clearing from 90 leaves both untouched.
     spr.fillRect(0, 90, W, H - 90, p.bg);
     spr.setTextDatum(MC_DATUM);
-    spr.setTextSize(4); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX, 140);
-    spr.setTextSize(2); spr.setTextColor(p.textDim, p.bg); spr.drawString(ss, CX, 175);
-    spr.setTextSize(1);                                     spr.drawString(dl, CX, 200);
+    spr.setTextSize(4); spr.setTextColor(p.text, p.bg);    spr.drawString(txt.hm, CX, 140);
+    spr.setTextSize(2); spr.setTextColor(p.textDim, p.bg); spr.drawString(txt.ss, CX, 175);
+    spr.setTextSize(1);                                     spr.drawString(txt.date, CX, 200);
     spr.setTextDatum(TL_DATUM);
     return;
   }
@@ -439,14 +432,12 @@ static void drawClock() {
 
   // Seconds tick at 1Hz; redrawing 3 strings at 60fps is 180 SPI ops/sec
   // for nothing. Gate on the second changing (or full repaint).
-  if (repaint || _clkTm.seconds != lastSec) {
-    lastSec = _clkTm.seconds;
-    char wdl[12]; snprintf(wdl, sizeof(wdl), "%s %s %02u", DOW[clockDow()], MON[mi], _clkDt.date);
-    char ssl[3]; snprintf(ssl, sizeof(ssl), "%02u", _clkTm.seconds);
+  if (repaint || _clk.tm_sec != lastSec) {
+    lastSec = _clk.tm_sec;
     M5.Lcd.setTextDatum(MC_DATUM);
-    M5.Lcd.setTextSize(3); M5.Lcd.setTextColor(p.text, p.bg);    M5.Lcd.drawString(hm, 170, 42);
-    M5.Lcd.setTextSize(2); M5.Lcd.setTextColor(p.textDim, p.bg); M5.Lcd.drawString(ssl, 170, 72);
-                                                                  M5.Lcd.drawString(wdl, 170, 102);
+    M5.Lcd.setTextSize(3); M5.Lcd.setTextColor(p.text, p.bg);    M5.Lcd.drawString(txt.hm, 170, 42);
+    M5.Lcd.setTextSize(2); M5.Lcd.setTextColor(p.textDim, p.bg); M5.Lcd.drawString(txt.sec, 170, 72);
+                                                                  M5.Lcd.drawString(txt.wdate, 170, 102);
     M5.Lcd.setTextDatum(TL_DATUM);
     M5.Lcd.setTextSize(1);
   }
@@ -1142,16 +1133,16 @@ void loop() {
   // blink bookkeeping
 
   // Charging clock: takes over the home screen when on USB power, no
-  // overlays, no prompt, no live Claude data, and the RTC has been set
+  // overlays, no prompt, no live Claude data, and the clock has been set
   // by the bridge. Pet sleeps underneath. Exit restores Y via
   // applyDisplayMode() so the next mode-switch isn't visually offset.
-  clockRefreshRtc();   // 1Hz internal throttle; also caches _onUsb
+  clockRefresh();   // 1Hz internal throttle; also caches _onUsb
   // Show the clock when nothing is happening — bridge heartbeat alone
-  // doesn't count as activity (it's the only way to get the RTC synced).
+  // doesn't count as activity (it's the only way to get the clock synced).
   bool clocking = displayMode == DISP_NORMAL
                && !menuOpen && !settingsOpen && !resetOpen && !inPrompt
                && tama.sessionsRunning == 0 && tama.sessionsWaiting == 0
-               && dataRtcValid() && _onUsb;
+               && dataClockValid() && _onUsb;
   if (clocking) clockUpdateOrient();
   else { clockOrient = 0; orientFrames = 0; paintedOrient = 0; }
   bool landscapeClock = clocking && clockOrient != 0;
@@ -1167,11 +1158,11 @@ void loop() {
     wasLandscape = landscapeClock;
   }
   if (clocking) {
-    uint8_t dow = clockDow();
+    int dow = _clk.tm_wday;
     bool weekend = (dow == 0 || dow == 6);
     bool friday  = (dow == 5);
 
-    uint8_t h = _clkTm.hours;
+    int h = _clk.tm_hour;
     if (h >= 1 && h < 7)             activeState = P_SLEEP;
     else if (weekend)                activeState = (now/8000 % 6 == 0) ? P_HEART : P_SLEEP;
     else if (h < 9)                  activeState = (now/6000 % 4 == 0) ? P_IDLE  : P_SLEEP;
