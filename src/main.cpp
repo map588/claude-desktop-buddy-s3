@@ -932,6 +932,28 @@ void drawHUD() {
   }
 }
 
+// Push the sprite only when its pixels changed. A full push keeps the CPU
+// busy for about 13 ms of SPI time, and most loop passes draw the same
+// frame again: the buddy animates at 5 fps, and the loop runs 30 or more
+// times per second.
+static uint32_t pushedHash  = 0;
+static bool     pushedValid = false;   // false: the LCD may show other content
+static void pushSpriteIfChanged() {
+  // Heap buffers are 4-byte aligned. Without this, the memcpy below
+  // compiles to byte loads and the hash costs about 2 ms per pass.
+  const uint8_t* px = (const uint8_t*)__builtin_assume_aligned(spr.getBuffer(), 4);
+  const size_t   n  = (size_t)spr.width() * spr.height() * 2;
+  uint32_t h = 2166136261u;            // FNV-1a over 32-bit words
+  for (size_t i = 0; i + 4 <= n; i += 4) {
+    uint32_t w; memcpy(&w, px + i, 4);
+    h = (h ^ w) * 16777619u;
+  }
+  if (pushedValid && h == pushedHash) return;
+  spr.pushSprite(0, 0);
+  pushedHash  = h;
+  pushedValid = true;
+}
+
 void setup() {
   auto cfg = M5.config();
   // With ARDUINO_USB_MODE=1 nothing else calls Serial.begin(). Until it
@@ -1211,6 +1233,7 @@ void loop() {
   }
   if (landscapeClock) {
     drawClock();
+    pushedValid = false;   // the LCD shows the clock, not the sprite
   } else if (!napping && !screenOff) {
     if (blePasskey()) drawPasskey();
     else if (clocking) drawClock();
@@ -1220,7 +1243,7 @@ void loop() {
     if (resetOpen) drawReset();
     else if (settingsOpen) drawSettings();
     else if (menuOpen) drawMenu();
-    spr.pushSprite(0, 0);
+    pushSpriteIfChanged();
   }
 
   // Face-down nap: dim immediately, pause animations, accumulate sleep time.
